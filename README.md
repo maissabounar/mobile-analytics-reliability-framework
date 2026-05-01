@@ -22,18 +22,19 @@ Finance had flagged a persistent gap between analytics and Stripe but couldn't e
 
 ## What Was Built
 
-**1. Full audit** — DebugView sessions, BigQuery structural analysis, and stakeholder interviews across Product, Engineering, Finance, CRM, and Legal. Every issue logged with platform, severity, owner, and root cause.
+**1. Full audit** — Firebase DebugView sessions (iOS + Android), BigQuery event-level analysis, and production QA validation. Every issue logged with platform, severity, owner, and root cause.
 
-**2. Standardized taxonomy** — Approved event list (38 events), parameter dictionary with enums and types, strict naming convention enforced in review and CI. Deprecated events tracked with migration paths.
+**2. Standardized taxonomy** — Approved event list (38 events), parameter dictionary with enums and types, strict naming convention enforced in review and CI.
 
-**3. Measurement plan** — YAML event definitions for all P0/P1 events with trigger logic, required parameters, platform-specific implementation, and QA rules. Engineers now implement from spec, not from informal tickets.
+**3. Tracking implementation (Commanders Act)** — Rebuilt event dispatch logic with consent gating, parameter validation, and server-confirmed triggers. Eliminated duplicate fires, blocked partial payloads, and enforced consistent event structure across iOS and Android.
 
-**4. BigQuery validation suite** — Five production queries running daily: null rate monitoring, duplicate detection, naming compliance, platform parity, and event sequence integrity. Results feed a Slack alert channel and Looker Studio dashboard.
+**4. Measurement plan** — YAML event definitions for all P0/P1 events with trigger logic, required parameters, platform-specific implementation, and QA rules.
 
-**5. Anomaly detection** — Rolling 7-day average + standard deviation per event and platform. Fires WARNING at z > 2, CRITICAL at z > 3. Distinguishes drops from spikes, classifies by event priority (P0/P1/P2).
+**5. BigQuery validation suite** — Five production queries running daily: null rate monitoring, duplicate detection, naming compliance, platform parity, and event sequence integrity.
 
-**6. GDPR remediation** — Firebase initialized with deny-all defaults before SDK configuration. Commanders Act CMP callback wired to `setConsent()`. Consent audit trail in BigQuery. 4 pre-consent violations eliminated.
+**6. Anomaly detection** — Rolling 7-day average + standard deviation per event and platform. Fires WARNING at z > 2, CRITICAL at z > 3.
 
+**7. GDPR remediation** — Firebase initialized with deny-all defaults before SDK configuration. Commanders Act CMP callback wired to `setConsent()`. Consent audit trail in BigQuery.
 ---
 
 ## Results
@@ -57,7 +58,17 @@ Finance had flagged a persistent gap between analytics and Stripe but couldn't e
 
 ## Stack
 
-Firebase Analytics · BigQuery (event-level, UNNEST, scheduled queries) · Commanders Act (TMS + CMP, TCF 2.2) · Looker Studio · dbt · iOS (Swift) · Android (Kotlin)
+**Tracking**
+Firebase Analytics · Commanders Act (TMS + CMP, TCF 2.2)
+
+**Data**
+BigQuery (event-level, UNNEST, scheduled queries) · dbt
+
+**QA & Monitoring**
+Firebase DebugView · Analytics Debugger for Apps · BigQuery validation suite
+
+**Platforms**
+iOS (Swift) · Android (Kotlin)
 
 ---
 
