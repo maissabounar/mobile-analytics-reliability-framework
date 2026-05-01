@@ -1,0 +1,39 @@
+event_name,category,priority,platforms,trigger,owner,added_version,deprecated
+app_open,engagement,P0,iOS|Android,Firebase auto-collected,Firebase,auto,false
+session_start,engagement,P0,iOS|Android,Firebase auto-collected — GDPR status under review,Firebase,auto,false
+first_open,acquisition,P0,iOS|Android,Firebase auto-collected,Firebase,auto,false
+screen_view,engagement,P2,iOS|Android,Firebase auto-collected,Firebase,auto,false
+login_started,auth,P1,iOS|Android,User taps login CTA on home screen,Product,v4.10,false
+login_success,auth,P0,iOS|Android,Auth API returns 200 with valid token,Product,v4.10,false
+login_failed,auth,P1,iOS|Android,Auth API returns 4xx or network timeout,Product,v4.10,false
+logout,auth,P1,iOS|Android,User confirms logout — fired before user_id cleared,Product,v4.10,false
+signup_started,acquisition,P1,iOS|Android,User taps create account CTA,Growth,v4.10,false
+signup_completed,acquisition,P0,iOS|Android,Account creation API returns 201,Growth,v4.10,false
+onboarding_started,acquisition,P1,iOS|Android,First screen of onboarding flow rendered post-signup,Growth,v4.10,false
+onboarding_step_completed,acquisition,P1,iOS|Android,User advances past each onboarding step (step_index 1–6),Growth,v4.11,false
+onboarding_completed,acquisition,P0,iOS|Android,Final onboarding step confirmed — account fully configured,Growth,v4.10,false
+claim_started,conversion,P0,iOS|Android,User opens new claim form,Product,v4.10,false
+claim_step_completed,conversion,P1,iOS|Android,User advances through multi-step claim form (step_index 1–4),Product,v4.11,false
+claim_submitted,conversion,P0,iOS|Android,Claim submission API returns 202 Accepted,Product,v4.12,false
+claim_approved,conversion,P0,iOS|Android,Backend webhook triggers after claim approval,Product,v4.12,false
+claim_rejected,conversion,P1,iOS|Android,Backend webhook triggers after claim rejection,Product,v4.12,false
+document_uploaded,conversion,P1,iOS|Android,Document upload API returns 200 — confirmed by server,Product,v4.13,false
+document_upload_failed,conversion,P2,iOS|Android,Document upload API returns error or timeout,Product,v4.13,false
+purchase_initiated,revenue,P0,iOS|Android,User taps payment CTA — payment sheet begins loading,Finance,v4.13,false
+payment_method_selected,revenue,P1,iOS|Android,User selects or confirms payment method,Finance,v4.13,false
+payment_completed,revenue,P0,iOS|Android,Payment provider webhook received and transaction_id confirmed,Finance,v4.13,false
+payment_failed,revenue,P0,iOS|Android,Payment provider returns failure — error_code captured,Finance,v4.13,false
+payment_refunded,revenue,P0,iOS|Android,Refund confirmed by payment provider,Finance,v4.14,false
+notification_opened,marketing,P1,iOS|Android,User taps push notification — deeplink fires,Marketing,v4.12,false
+notification_dismissed,marketing,P2,iOS|Android,User swipes away notification (iOS only — Android not supported),Marketing,v4.12,false
+in_app_message_viewed,marketing,P2,iOS|Android,In-app message fully rendered on screen,Marketing,v4.14,false
+in_app_message_clicked,marketing,P1,iOS|Android,User taps CTA within in-app message,Marketing,v4.14,false
+filter_applied,engagement,P2,iOS|Android,User taps Apply after selecting filter criteria — not on each interaction,Product,v4.14,false
+search_performed,engagement,P2,iOS|Android,User submits search query (enter key or search button tap),Product,v4.14,false
+error_occurred,quality,P1,iOS|Android,Unhandled exception or critical error state — uses error_type enum,Engineering,v4.13,false
+consent_granted,privacy,P0,iOS|Android,User accepts all consent categories via CMP,Legal,v4.11,false
+consent_declined,privacy,P0,iOS|Android,User declines all or partial consent categories,Legal,v4.11,false
+consent_updated,privacy,P0,iOS|Android,User changes consent preferences after initial setting,Legal,v4.11,false
+submit_claim,conversion,P0,iOS|Android,DEPRECATED — replaced by claim_submitted. Remove by v5.0.,Product,v4.0,true
+notif_clicked,marketing,P1,Android,DEPRECATED — non-standard name. Replaced by notification_opened.,Marketing,v4.1,true
+documentUploaded,conversion,P1,iOS,DEPRECATED — camelCase violation. Replaced by document_uploaded.,Product,v4.0,true

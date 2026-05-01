@@ -1,0 +1,127 @@
+event_name: claim_submitted
+version: "2.0"
+priority: P0
+category: conversion
+owner: Product — Claim Flow Team
+updated: "2025-10-01"
+
+description: >
+  Fired when a user successfully submits a claim and the backend confirms receipt.
+  This is the primary conversion event for the claim flow and the source of truth
+  for claim submission volume in all dashboards and OKR reporting.
+
+trigger:
+  when: API response returns HTTP 202 (Accepted) from /api/v2/claims/submit
+  not_when:
+    - User taps the submit button (button tap is not a confirmation)
+    - API returns 4xx or 5xx (use claim_submission_failed for errors)
+    - Draft is saved without final submission
+  notes: >
+    Idempotency check required: if claim_id is already present in local event cache,
+    do not re-fire. Prevents duplicate events on retry or activity recreation.
+
+parameters:
+  required:
+    - name: claim_id
+      type: string
+      source: API response body → claim.id
+      example: "clm_9f3a21bc"
+      notes: Must be assigned by server. Never generate client-side.
+
+    - name: claim_type
+      type: string
+      allowed_values: ["property", "vehicle", "health", "travel"]
+      example: "property"
+
+    - name: has_documents
+      type: string
+      allowed_values: ["true", "false"]
+      example: "true"
+      notes: String representation of boolean. Firebase does not support native booleans.
+
+    - name: user_id
+      type: string
+      source: Authentication state — must be set before event fires
+      example: "usr_8f3a2c"
+
+    - name: app_version
+      type: string
+      example: "4.13.2"
+
+  optional:
+    - name: step_count
+      type: integer
+      description: Number of steps completed before submission (indicates complexity)
+      example: 4
+
+    - name: time_to_submit_seconds
+      type: integer
+      description: Seconds from claim_started to claim_submitted for this session
+      example: 347
+
+platform_implementation:
+  ios:
+    location: ClaimSubmissionViewModel.swift → submitClaim() completion handler
+    code_snippet: |
+      claimService.submitClaim(payload) { [weak self] result in
+          switch result {
+          case .success(let response):
+              Analytics.logEvent("claim_submitted", parameters: [
+                  "claim_id": response.claimId,
+                  "claim_type": self?.claimType ?? "",
+                  "has_documents": self?.hasDocuments == true ? "true" : "false",
+                  "user_id": AuthManager.shared.userId ?? ""
+              ])
+          case .failure:
+              Analytics.logEvent("claim_submission_failed", parameters: [:])
+          }
+      }
+    verified: true
+    version_implemented: "4.12"
+
+  android:
+    location: ClaimSubmissionViewModel.kt → submitClaim() observer
+    code_snippet: |
+      viewModel.submissionResult.observe(viewLifecycleOwner) { result ->
+          if (result.isSuccess) {
+              val params = bundleOf(
+                  "claim_id" to result.getOrNull()?.claimId,
+                  "claim_type" to claimType,
+                  "has_documents" to if (hasDocuments) "true" else "false",
+                  "user_id" to AuthManager.userId
+              )
+              FirebaseAnalytics.getInstance(requireContext())
+                  .logEvent("claim_submitted", params)
+          }
+      }
+    verified: true
+    version_implemented: "4.12"
+    notes: >
+      Previous implementation fired on OnClickListener. Moved to ViewModel observer
+      in v4.12. Activity recreation guard added via savedInstanceState check.
+
+qa_rules:
+  - rule: Event must fire exactly once per successful submission
+    method: DebugView — submit claim, verify single event with correct claim_id
+    fail_condition: Zero events or more than one event for same claim_id
+
+  - rule: claim_id must be non-null and non-empty
+    method: BigQuery — check_null_user_id.sql adapted for claim_id
+    fail_condition: claim_id IS NULL or claim_id = ''
+
+  - rule: Event must not fire on API error (4xx/5xx)
+    method: DebugView — force network failure, verify no claim_submitted fires
+    fail_condition: Event fires when API returns error
+
+  - rule: user_id must be set before event fires
+    method: BigQuery — check_null_user_id.sql
+    fail_condition: user_id IS NULL on claim_submitted events
+
+  - rule: Trigger timing — no event before 202 response
+    method: Charles Proxy — intercept API call, verify event timestamp follows response
+    fail_condition: Event timestamp precedes API response timestamp by >500ms
+
+bigquery_notes: >
+  Deduplicated in dbt model fct_claim_conversions using claim_id as partition key.
+  Transition UNION with deprecated event submit_claim active until v5.0.
+  Verified P0 — any anomaly in daily volume triggers Slack alert to #data-alerts.

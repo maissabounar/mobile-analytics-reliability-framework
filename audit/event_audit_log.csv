@@ -1,0 +1,27 @@
+event_name,platform,issue_type,severity,description,owner,status,fix_version
+claim_submitted,Android,trigger_timing,P0,Event fires on button tap instead of successful API response (202). Duplicates created when user taps twice.,Mobile - Android,Fixed,v4.12
+claim_submitted,iOS,trigger_timing,P0,Event fires on button tap instead of successful API response (202). Less prevalent due to button debounce.,Mobile - iOS,Fixed,v4.12
+payment_completed,Android,missing_parameter,P0,transaction_id absent in 12.4% of events. Root cause: async Stripe callback race condition.,Mobile - Android,Fixed,v4.13
+payment_completed,iOS,missing_parameter,P1,transaction_id absent in 2.1% of events. Occurs during app backgrounding mid-payment.,Mobile - iOS,In progress,v4.14
+payment_completed,Android,event_duplication,P0,Double-fire on payment confirmation screen when activity is recreated (rotation or return from background).,Mobile - Android,Fixed,v4.13
+user_login,Android,missing_parameter,P1,user_id not set on 8.3% of login_success events. setUserId called before async auth token resolves.,Mobile - Android,Fixed,v4.12
+user_login,iOS,missing_parameter,P1,user_id not set in 1.9% of cases. Similar async issue but less frequent.,Mobile - iOS,Fixed,v4.12
+onboarding_step_completed,Android,missing_parameter,P1,step_index parameter absent on steps 3 and 5. Not wired in Fragment lifecycle callbacks.,Mobile - Android,Fixed,v4.12
+onboarding_step_completed,iOS,platform_parity,P2,Event present and correct on iOS. Android version missing step_index.,Mobile - Android,Fixed,v4.12
+screen_view,both,event_duplication,P2,Duplicate screen_view events on tab re-selection. No deduplication logic on tab switch.,Mobile - Both,Backlog,v4.15
+document_uploaded,Android,missing_implementation,P1,Event exists in iOS only. Android team was not included in original measurement plan review.,Mobile - Android,Fixed,v4.13
+document_uploaded,iOS,naming_inconsistency,P2,iOS fires documentUploaded (camelCase). Should be document_uploaded per taxonomy.,Mobile - iOS,Fixed,v4.13
+notif_clicked,Android,naming_inconsistency,P2,Non-standard name. Should be notification_opened. Maps to push campaign attribution.,Marketing,Fixed,v4.12
+notif_clicked,iOS,naming_inconsistency,P2,Same naming issue. CRM cannot reconcile iOS vs Android campaign touchpoints.,Marketing,Fixed,v4.12
+claim_draft_saved,Android,pre_consent_tracking,P0,Event fires before Firebase consent state is initialized. CMP consent check not awaited.,Mobile - Android,Fixed,v4.11
+claim_draft_saved,iOS,pre_consent_tracking,P0,Same pre-consent issue. Both platforms confirmed by DPO review.,Mobile - iOS,Fixed,v4.11
+app_open,Android,pre_consent_tracking,P0,app_open fires immediately on launch before consent banner renders.,Mobile - Android,Fixed,v4.11
+app_open,iOS,pre_consent_tracking,P0,Same issue on iOS. First-launch event being tracked for new installs before any consent.,Mobile - iOS,Fixed,v4.11
+session_start,both,pre_consent_tracking,P1,session_start triggered before Firebase consent state confirmed active. Debated as anonymous/non-personal.,Legal,Under review,TBD
+error_occurred,Android,naming_inconsistency,P2,Uses error_type as free-text field. 47 distinct values found including internal stack trace fragments.,Mobile - Android,Fixed,v4.13
+error_occurred,iOS,naming_inconsistency,P2,error_type values differ from Android. No shared enum. Makes cross-platform error analysis impossible.,Mobile - iOS,Fixed,v4.13
+purchase_initiated,Android,missing_implementation,P1,Event not implemented on Android. Only exists on iOS. Breaks top-of-funnel attribution for Android users.,Mobile - Android,Fixed,v4.13
+purchase_initiated,iOS,approved,P1,Correctly implemented. Has all required parameters. Used as baseline for Android remediation.,Mobile - iOS,No action,N/A
+filter_applied,both,trigger_timing,P2,Fires on every filter interaction (keypress, slider drag). Should fire on filter confirmation only.,Product,Fixed,v4.14
+logout,Android,missing_parameter,P2,user_id is cleared before the event fires. Cannot associate logout to session.,Mobile - Android,Fixed,v4.13
+logout,iOS,approved,P2,user_id correctly captured before clearance. Android used iOS as reference for fix.,Mobile - iOS,No action,N/A
