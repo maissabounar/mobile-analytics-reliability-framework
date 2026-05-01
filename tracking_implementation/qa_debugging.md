@@ -6,13 +6,13 @@
 
 | Tool | Used for |
 |---|---|
-| **Analytics Debugger** (Chrome extension) | Real-time dataLayer inspection — validates payload structure on each interaction |
+| **Analytics Debugger for Apps** (Chrome extension) |- Capture analytics hits sent from the mobile app - Validate the event payload before it reaches analytics platforms - Confirm event name, parameters, consent state, and platform metadata - Check that `transaction_id` / `claim_id` come from server response, not client-generated values |
 | **Firebase DebugView** | Mobile event validation — confirms event name, parameters, and trigger timing |
 | **BigQuery** | Post-release validation — null rates, duplicates, funnel integrity, platform parity |
 
 ---
 
-## Real-Time Validation
+## Mobile Real-Time Validation
 
 **Analytics Debugger**
 - Intercept each `dataLayer.push()` on the target page
