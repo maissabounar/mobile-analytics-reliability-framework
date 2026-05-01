@@ -1,29 +1,25 @@
 -- funnel_claim_submission.sql
 -- Claim submission funnel: claim_started → steps 1-4 → document_uploaded → claim_submitted
--- Scope: last 30 days, authenticated users only (user_id non-null)
+-- Scope: last 30 days, authenticated users only
 -- Deduplication: claim_id is the idempotency key for claim_submitted
--- Known history: pre-v4.12 Android data contains ~7.9% duplicate claim_submitted events
---   caused by OnClickListener binding. Excluded via app_version filter below.
--- Run: daily scheduled query → results feed Looker Studio funnel dashboard (Page 2)
+-- Results feed Looker Studio funnel dashboard.
+-- Replace `project.analytics_XXXXXXX` with your Firebase export project and dataset.
+-- Depending on schema, replace `platform` with `device.operating_system` if needed.
 
-WITH
-
-raw AS (
+WITH raw AS (
   SELECT
     user_pseudo_id,
-    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'user_id')        AS user_id,
-    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'claim_id')       AS claim_id,
-    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'claim_type')     AS claim_type,
-    (SELECT value.int_value    FROM UNNEST(event_params) WHERE key = 'step_index')     AS step_index,
-    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'has_documents')  AS has_documents,
+    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'user_id') AS user_id,
+    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'claim_id') AS claim_id,
+    (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'claim_type') AS claim_type,
+    (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'step_index') AS step_index,
     platform,
-    app_info.version                                                                    AS app_version,
+    app_info.version AS app_version,
     event_name,
     event_timestamp
   FROM `project.analytics_XXXXXXX.events_*`
-  WHERE
-    _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY))
-                      AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY))
+  WHERE _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY))
+                          AND FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY))
     AND event_name IN (
       'claim_started',
       'claim_step_completed',
@@ -31,107 +27,125 @@ raw AS (
       'claim_submitted'
     )
     AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'user_id') IS NOT NULL
-    -- Exclude pre-fix Android versions with known duplication bug
-    AND NOT (platform = 'ANDROID' AND app_info.version < '4.12')
 ),
 
--- One row per claim attempt, keyed on claim_id when available.
--- A session without claim_id (claim_started before API assigns it) falls back to user_pseudo_id.
--- This correctly handles abandoned sessions that never reached a server-assigned claim_id.
-per_claim AS (
+normalized AS (
   SELECT
-    COALESCE(MAX(claim_id), user_pseudo_id)                                           AS claim_key,
-    MAX(user_id)                                                                       AS user_id,
-    MAX(platform)                                                                      AS platform,
-    MAX(claim_id)                                                                      AS claim_id,
-    MAX(claim_type)                                                                    AS claim_type,
-    MAX(has_documents)                                                                 AS has_documents,
+    *,
+    CONCAT(
+      SPLIT(app_version, '.')[SAFE_OFFSET(0)], '.',
+      SPLIT(app_version, '.')[SAFE_OFFSET(1)]
+    ) AS major_minor_version,
 
-    MAX(CASE WHEN event_name = 'claim_started'                             THEN 1 END) AS did_start,
-    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 1   THEN 1 END) AS did_step_1,
-    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 2   THEN 1 END) AS did_step_2,
-    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 3   THEN 1 END) AS did_step_3,
-    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 4   THEN 1 END) AS did_step_4,
-    MAX(CASE WHEN event_name = 'document_uploaded'                         THEN 1 END) AS did_upload,
-    MAX(CASE WHEN event_name = 'claim_submitted'                           THEN 1 END) AS did_submit,
-
-    MIN(CASE WHEN event_name = 'claim_started'   THEN event_timestamp END)             AS ts_started,
-    MIN(CASE WHEN event_name = 'claim_submitted' THEN event_timestamp END)             AS ts_submitted
+    -- claim_id is not always available at claim_started.
+    -- For abandoned claims, fallback keeps them in the funnel.
+    COALESCE(claim_id, CONCAT(user_pseudo_id, '-', CAST(DIV(event_timestamp, 1800000000) AS STRING))) AS claim_attempt_key
   FROM raw
-  GROUP BY user_pseudo_id, COALESCE(
-    (SELECT value.string_value FROM UNNEST((SELECT event_params FROM raw r2 WHERE r2.user_pseudo_id = raw.user_pseudo_id LIMIT 1)) WHERE key = 'claim_id'),
-    user_pseudo_id
+  WHERE NOT (
+    UPPER(platform) = 'ANDROID'
+    AND SAFE_CAST(SPLIT(app_version, '.')[SAFE_OFFSET(0)] AS INT64) = 4
+    AND SAFE_CAST(SPLIT(app_version, '.')[SAFE_OFFSET(1)] AS INT64) < 12
   )
 ),
 
--- Deduplicate claim_submitted: keep only the first occurrence per claim_id.
--- Residual duplicates post-v4.12 (0.2%) are network-retry edge cases, not implementation bugs.
-deduped AS (
+per_claim AS (
   SELECT
-    *,
-    ROW_NUMBER() OVER (PARTITION BY claim_id ORDER BY ts_submitted) AS rn
-  FROM per_claim
-  WHERE claim_id IS NOT NULL
+    claim_attempt_key,
+    MAX(user_id) AS user_id,
+    MAX(platform) AS platform,
+    MAX(claim_id) AS claim_id,
+    COALESCE(MAX(claim_type), 'unknown') AS claim_type,
+    MAX(app_version) AS app_version,
+
+    MAX(CASE WHEN event_name = 'claim_started' THEN 1 ELSE 0 END) AS did_start,
+    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 1 THEN 1 ELSE 0 END) AS did_step_1,
+    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 2 THEN 1 ELSE 0 END) AS did_step_2,
+    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 3 THEN 1 ELSE 0 END) AS did_step_3,
+    MAX(CASE WHEN event_name = 'claim_step_completed' AND step_index = 4 THEN 1 ELSE 0 END) AS did_step_4,
+    MAX(CASE WHEN event_name = 'document_uploaded' THEN 1 ELSE 0 END) AS did_upload,
+    MAX(CASE WHEN event_name = 'claim_submitted' THEN 1 ELSE 0 END) AS did_submit,
+
+    MIN(CASE WHEN event_name = 'claim_started' THEN event_timestamp END) AS ts_started,
+    MIN(CASE WHEN event_name = 'claim_submitted' THEN event_timestamp END) AS ts_submitted
+  FROM normalized
+  GROUP BY claim_attempt_key
 ),
 
--- Re-union deduped (claim_id present) with abandoned sessions (no claim_id, never submitted)
-combined AS (
-  SELECT * EXCEPT(rn) FROM deduped WHERE rn = 1
-  UNION ALL
-  SELECT * FROM per_claim WHERE claim_id IS NULL
+deduped AS (
+  SELECT
+    *
+  FROM per_claim
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY COALESCE(claim_id, claim_attempt_key)
+    ORDER BY ts_submitted NULLS LAST, ts_started
+  ) = 1
+),
+
+eligible AS (
+  SELECT *
+  FROM deduped
+  WHERE did_start = 1
 ),
 
 funnel AS (
   SELECT
-    platform,
+    UPPER(platform) AS platform,
     claim_type,
 
-    COUNT(*)                        AS started,
-    COUNTIF(did_step_1 = 1)         AS step_1,
-    COUNTIF(did_step_2 = 1)         AS step_2,
-    COUNTIF(did_step_3 = 1)         AS step_3,
-    COUNTIF(did_step_4 = 1)         AS step_4,
-    COUNTIF(did_upload = 1)         AS uploaded,
-    COUNTIF(did_submit = 1)         AS submitted,
+    COUNT(*) AS started,
+    COUNTIF(did_step_1 = 1) AS step_1,
+    COUNTIF(did_step_2 = 1) AS step_2,
+    COUNTIF(did_step_3 = 1) AS step_3,
+    COUNTIF(did_step_4 = 1) AS step_4,
+    COUNTIF(did_upload = 1) AS uploaded,
+    COUNTIF(did_submit = 1) AS submitted,
 
-    -- Step-to-step conversion rates (sequential, not vs started)
-    ROUND(SAFE_DIVIDE(COUNTIF(did_step_1 = 1), COUNT(*))                       * 100, 1) AS cvr_start_to_s1,
-    ROUND(SAFE_DIVIDE(COUNTIF(did_step_2 = 1), COUNTIF(did_step_1 = 1))        * 100, 1) AS cvr_s1_to_s2,
-    ROUND(SAFE_DIVIDE(COUNTIF(did_step_3 = 1), COUNTIF(did_step_2 = 1))        * 100, 1) AS cvr_s2_to_s3,
-    ROUND(SAFE_DIVIDE(COUNTIF(did_step_4 = 1), COUNTIF(did_step_3 = 1))        * 100, 1) AS cvr_s3_to_s4,
-    ROUND(SAFE_DIVIDE(COUNTIF(did_upload = 1), COUNTIF(did_step_4 = 1))        * 100, 1) AS cvr_s4_to_upload,
-    ROUND(SAFE_DIVIDE(COUNTIF(did_submit = 1), COUNTIF(did_upload = 1))        * 100, 1) AS cvr_upload_to_submit,
+    ROUND(SAFE_DIVIDE(COUNTIF(did_step_1 = 1), COUNT(*)) * 100, 1) AS cvr_start_to_s1,
+    ROUND(SAFE_DIVIDE(COUNTIF(did_step_2 = 1), COUNTIF(did_step_1 = 1)) * 100, 1) AS cvr_s1_to_s2,
+    ROUND(SAFE_DIVIDE(COUNTIF(did_step_3 = 1), COUNTIF(did_step_2 = 1)) * 100, 1) AS cvr_s2_to_s3,
+    ROUND(SAFE_DIVIDE(COUNTIF(did_step_4 = 1), COUNTIF(did_step_3 = 1)) * 100, 1) AS cvr_s3_to_s4,
+    ROUND(SAFE_DIVIDE(COUNTIF(did_upload = 1), COUNTIF(did_step_4 = 1)) * 100, 1) AS cvr_s4_to_upload,
+    ROUND(SAFE_DIVIDE(COUNTIF(did_submit = 1), COUNTIF(did_upload = 1)) * 100, 1) AS cvr_upload_to_submit,
+    ROUND(SAFE_DIVIDE(COUNTIF(did_submit = 1), COUNT(*)) * 100, 1) AS overall_cvr,
 
-    -- End-to-end: claim_started → claim_submitted
-    ROUND(SAFE_DIVIDE(COUNTIF(did_submit = 1), COUNT(*))                       * 100, 1) AS overall_cvr,
+    ROUND(APPROX_QUANTILES(
+      CASE
+        WHEN ts_started IS NOT NULL AND ts_submitted IS NOT NULL
+        THEN SAFE_DIVIDE(ts_submitted - ts_started, 60000000)
+      END,
+      100
+    )[OFFSET(25)], 1) AS p25_minutes,
 
-    -- Time-to-submit distribution (microseconds → minutes)
-    ROUND(APPROX_QUANTILES(SAFE_DIVIDE(ts_submitted - ts_started, 60000000), 100)[OFFSET(25)], 1) AS p25_minutes,
-    ROUND(APPROX_QUANTILES(SAFE_DIVIDE(ts_submitted - ts_started, 60000000), 100)[OFFSET(50)], 1) AS p50_minutes,
-    ROUND(APPROX_QUANTILES(SAFE_DIVIDE(ts_submitted - ts_started, 60000000), 100)[OFFSET(90)], 1) AS p90_minutes,
+    ROUND(APPROX_QUANTILES(
+      CASE
+        WHEN ts_started IS NOT NULL AND ts_submitted IS NOT NULL
+        THEN SAFE_DIVIDE(ts_submitted - ts_started, 60000000)
+      END,
+      100
+    )[OFFSET(50)], 1) AS p50_minutes,
 
-    -- Document upload rate among submitted claims (proxy for claim complexity)
+    ROUND(APPROX_QUANTILES(
+      CASE
+        WHEN ts_started IS NOT NULL AND ts_submitted IS NOT NULL
+        THEN SAFE_DIVIDE(ts_submitted - ts_started, 60000000)
+      END,
+      100
+    )[OFFSET(90)], 1) AS p90_minutes,
+
     ROUND(SAFE_DIVIDE(COUNTIF(did_submit = 1 AND did_upload = 1), COUNTIF(did_submit = 1)) * 100, 1) AS pct_submitted_with_docs
-
-  FROM combined
-  WHERE did_start = 1
+  FROM eligible
   GROUP BY platform, claim_type
 ),
 
--- Attach alert flags directly in the output.
--- Thresholds derived from 90-day baseline (Jul–Sep 2025, post-fix data only).
--- P0: overall_cvr drop signals broken funnel or product regression — escalate same day.
--- P1: single-step drop ≥ 10pp vs baseline — investigate within 3 days.
--- P2: time-to-submit p90 spike — UX signal, no urgent action required.
 flagged AS (
   SELECT
     *,
     CASE
-      WHEN overall_cvr    < 55.0  THEN 'P0 — overall conversion below 55% (baseline 64%)'
-      WHEN cvr_s2_to_s3   < 72.0  THEN 'P1 — step 2→3 drop-off below 72% (baseline 82%)'
-      WHEN cvr_s3_to_s4   < 74.0  THEN 'P1 — step 3→4 drop-off below 74% (baseline 84%)'
+      WHEN overall_cvr < 55.0 THEN 'P0 — overall conversion below 55% (baseline 64%)'
+      WHEN cvr_s2_to_s3 < 72.0 THEN 'P1 — step 2→3 drop-off below 72% (baseline 82%)'
+      WHEN cvr_s3_to_s4 < 74.0 THEN 'P1 — step 3→4 drop-off below 74% (baseline 84%)'
       WHEN cvr_upload_to_submit < 85.0 THEN 'P1 — upload→submit drop below 85% (baseline 93%)'
-      WHEN p90_minutes    > 45.0  THEN 'P2 — p90 time-to-submit above 45 min (baseline 28 min)'
+      WHEN p90_minutes > 45.0 THEN 'P2 — p90 time-to-submit above 45 min (baseline 28 min)'
       ELSE NULL
     END AS alert_flag
   FROM funnel
@@ -161,6 +175,11 @@ SELECT
   alert_flag
 FROM flagged
 ORDER BY
-  CASE WHEN alert_flag LIKE 'P0%' THEN 1 WHEN alert_flag LIKE 'P1%' THEN 2 ELSE 3 END,
+  CASE
+    WHEN alert_flag LIKE 'P0%' THEN 1
+    WHEN alert_flag LIKE 'P1%' THEN 2
+    WHEN alert_flag LIKE 'P2%' THEN 3
+    ELSE 4
+  END,
   platform,
-  claim_type
+  claim_type;
