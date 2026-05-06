@@ -2,131 +2,177 @@
 
 **Version:** 2.1  
 **Owner:** Data Analytics  
-**Applies to:** All custom Firebase Analytics events  
+**Scope:** All custom Firebase Analytics events  
 **Last updated:** 2025-10-01
+
+This dictionary defines the approved parameters for custom mobile analytics events.
+
+It should be used by Product, Engineering, Analytics, and CRM teams when creating, reviewing, or updating tracking requirements.
+
+---
+
+## Rules
+
+| Rule | Description |
+|---|---|
+| Stable names | Parameter names must use `snake_case` |
+| Stable values | Enum values must match the approved list |
+| No PII | Do not capture names, emails, phone numbers, addresses, or free-text search queries |
+| Backend IDs | Business IDs must come from backend or provider responses |
+| Cross-platform parity | iOS and Android must use the same parameter names and values |
+
+> [!IMPORTANT]
+> Do not create platform-specific parameter names. If iOS and Android need the same data, they must use the same parameter.
 
 ---
 
 ## Universal Parameters
 
-These parameters must be present on every custom event unless marked optional.
+These parameters apply to all custom events unless the event definition says otherwise.
 
 | Parameter | Type | Required | Description | Example |
 |---|---|---|---|---|
-| `user_id` | string | Yes* | Internal user identifier. Set via `setUserId()` post-authentication. Null only for pre-auth events. | `"usr_8f3a2c"` |
-| `session_id` | string | Yes | Firebase-assigned session identifier | `"1718392847_abc"` |
-| `platform` | string | Yes | `"ios"` or `"android"` — lowercase | `"android"` |
-| `app_version` | string | Yes | Semantic version of the app | `"4.13.2"` |
-| `environment` | string | Yes | `"production"`, `"staging"`, or `"debug"` | `"production"` |
+| `user_id` | string | Conditional | Internal user identifier, set after authentication | `usr_8f3a2c` |
+| `session_id` | string | Yes | Firebase session identifier | `1718392847_abc` |
+| `platform` | string | Yes | Mobile platform | `android` |
+| `app_version` | string | Yes | App version | `4.13.2` |
+| `environment` | string | Yes | App environment | `production` |
 
-*`user_id` is omitted for events that fire pre-authentication (e.g., `signup_started`, `login_started`).
+Allowed values:
 
----
+| Parameter | Values |
+|---|---|
+| `platform` | `ios`, `android` |
+| `environment` | `production`, `staging`, `debug` |
 
-## Domain-Specific Parameters
-
-### Authentication
-
-| Parameter | Type | Events | Description |
-|---|---|---|---|
-| `auth_method` | string | `login_success`, `signup_completed` | `"email"`, `"google"`, `"apple"`, `"sms"` |
-| `failure_reason` | string | `login_failed` | `"invalid_credentials"`, `"account_locked"`, `"network_error"` |
+`user_id` is required for post-authentication events. It should be omitted or null for pre-authentication events such as `signup_started` and `login_started`.
 
 ---
 
-### Onboarding
+## Authentication
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
-| `step_index` | integer | `onboarding_step_completed` | 1-indexed step number (1–6) |
-| `step_name` | string | `onboarding_step_completed` | Human-readable step identifier: `"profile_setup"`, `"id_verification"`, `"payment_method"`, `"preferences"`, `"notifications"`, `"confirmation"` |
-| `is_returning_user` | string | `onboarding_started` | `"true"` or `"false"` — returning users who re-enter onboarding after account reset |
+| `auth_method` | string | `login_success`, `signup_completed` | `email`, `google`, `apple`, `sms` |
+| `failure_reason` | string | `login_failed` | `invalid_credentials`, `account_locked`, `network_error` |
 
 ---
 
-### Claim Flow
+## Onboarding
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
-| `claim_id` | string | All `claim_*` events | Server-assigned claim identifier. Must be set after API response, not before. | 
-| `claim_type` | string | `claim_started`, `claim_submitted` | `"property"`, `"vehicle"`, `"health"`, `"travel"` |
-| `step_index` | integer | `claim_step_completed` | 1-indexed (1–4) |
-| `step_name` | string | `claim_step_completed` | `"incident_details"`, `"evidence_upload"`, `"review"`, `"confirmation"` |
-| `has_documents` | string | `claim_submitted` | `"true"` or `"false"` |
-| `rejection_reason` | string | `claim_rejected` | `"incomplete_documents"`, `"out_of_coverage"`, `"duplicate"`, `"expired_policy"` |
+| `step_index` | integer | `onboarding_step_completed` | Step number from 1 to 6 |
+| `step_name` | string | `onboarding_step_completed` | `profile_setup`, `id_verification`, `payment_method`, `preferences`, `notifications`, `confirmation` |
+| `is_returning_user` | string | `onboarding_started` | `true`, `false` |
 
 ---
 
-### Payments
+## Claim Flow
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
-| `transaction_id` | string | `payment_completed`, `payment_refunded` | Payment provider transaction ID. Must be captured from API response, never generated client-side. |
-| `amount` | float | `payment_completed`, `payment_refunded` | Amount in major currency units (EUR, not cents). `49.99` not `4999`. |
-| `currency` | string | `payment_completed` | ISO 4217 code. `"EUR"` |
-| `payment_method` | string | `payment_completed`, `payment_method_selected` | `"card"`, `"sepa_debit"`, `"apple_pay"`, `"google_pay"` |
-| `error_code` | string | `payment_failed` | Payment provider error code: `"card_declined"`, `"insufficient_funds"`, `"expired_card"`, `"processing_error"` |
-| `is_retry` | string | `purchase_initiated` | `"true"` if this is a retry after a failed attempt |
+| `claim_id` | string | All `claim_*` events | Server-generated claim ID |
+| `claim_type` | string | `claim_started`, `claim_submitted` | `property`, `vehicle`, `health`, `travel` |
+| `step_index` | integer | `claim_step_completed` | Step number from 1 to 4 |
+| `step_name` | string | `claim_step_completed` | `incident_details`, `evidence_upload`, `review`, `confirmation` |
+| `has_documents` | string | `claim_submitted` | `true`, `false` |
+| `rejection_reason` | string | `claim_rejected` | `incomplete_documents`, `out_of_coverage`, `duplicate`, `expired_policy` |
+
+> [!NOTE]
+> `claim_id` must be generated by the backend. Do not create it client-side.
 
 ---
 
-### Documents
+## Payments
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
-| `document_type` | string | `document_uploaded`, `document_upload_failed` | `"id_card"`, `"proof_of_address"`, `"invoice"`, `"photo"`, `"other"` |
+| `transaction_id` | string | `payment_completed`, `payment_refunded` | Payment provider transaction ID |
+| `amount` | float | `payment_completed`, `payment_refunded` | Amount in major currency units, for example `49.99` |
+| `currency` | string | `payment_completed` | ISO 4217 code, for example `EUR` |
+| `payment_method` | string | `payment_completed`, `payment_method_selected` | `card`, `sepa_debit`, `apple_pay`, `google_pay` |
+| `error_code` | string | `payment_failed` | `card_declined`, `insufficient_funds`, `expired_card`, `processing_error` |
+| `is_retry` | string | `purchase_initiated` | `true`, `false` |
+
+> [!IMPORTANT]
+> `transaction_id` must come from the payment provider or backend response. Do not generate it client-side.
+
+---
+
+## Documents
+
+| Parameter | Type | Events | Values / Description |
+|---|---|---|---|
+| `document_type` | string | `document_uploaded`, `document_upload_failed` | `id_card`, `proof_of_address`, `invoice`, `photo`, `other` |
 | `file_size_kb` | integer | `document_uploaded` | File size in kilobytes |
-| `upload_duration_ms` | integer | `document_uploaded` | Time from upload initiation to server confirmation, in milliseconds |
+| `upload_duration_ms` | integer | `document_uploaded` | Time from upload start to server confirmation |
 
 ---
 
-### Notifications & Messaging
+## Notifications and Messaging
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
-| `campaign_id` | string | `notification_opened`, `in_app_message_clicked` | CRM campaign identifier from Commanders Act |
-| `notification_type` | string | `notification_opened` | `"push"`, `"in_app"`, `"email"` (for cross-channel tracking) |
-| `deeplink_target` | string | `notification_opened` | Screen or flow the notification routes to: `"claim_form"`, `"payment"`, `"home"` |
+| `campaign_id` | string | `notification_opened`, `in_app_message_clicked` | CRM campaign identifier |
+| `notification_type` | string | `notification_opened` | `push`, `in_app`, `email` |
+| `deeplink_target` | string | `notification_opened` | `claim_form`, `payment`, `home` |
 
 ---
 
-### Errors
+## Errors
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
-| `error_type` | string | `error_occurred` | Must use approved enum: `"auth_error"`, `"network_timeout"`, `"validation_failed"`, `"server_error"`, `"permission_denied"`, `"session_expired"`, `"file_too_large"`, `"unsupported_format"`, `"payment_declined"`, `"unknown"` |
-| `error_code` | string | `error_occurred` | Internal or provider error code. Optional. |
+| `error_type` | string | `error_occurred` | `auth_error`, `network_timeout`, `validation_failed`, `server_error`, `permission_denied`, `session_expired`, `file_too_large`, `unsupported_format`, `payment_declined`, `unknown` |
+| `error_code` | string | `error_occurred` | Internal or provider error code |
 | `screen_name` | string | `error_occurred` | Screen where the error occurred |
 
 ---
 
-### Filters & Search
+## Filters and Search
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
 | `filter_count` | integer | `filter_applied` | Number of active filters after apply |
-| `filter_types` | string | `filter_applied` | Comma-separated list of filter categories applied: `"date,type,status"` |
-| `query_length` | integer | `search_performed` | Character count of the search query (do not capture query text — PII risk) |
+| `filter_types` | string | `filter_applied` | Comma-separated filter categories, for example `date,type,status` |
+| `query_length` | integer | `search_performed` | Search query character count |
 | `results_count` | integer | `search_performed` | Number of results returned |
+
+> [!IMPORTANT]
+> Do not capture raw search query text. Use `query_length` instead to avoid collecting sensitive data.
 
 ---
 
-### Consent
+## Consent
 
-| Parameter | Type | Events | Description |
+| Parameter | Type | Events | Values / Description |
 |---|---|---|---|
-| `consent_analytics` | string | All consent events | `"granted"` or `"denied"` |
-| `consent_marketing` | string | All consent events | `"granted"` or `"denied"` |
-| `consent_personalization` | string | All consent events | `"granted"` or `"denied"` |
-| `consent_source` | string | All consent events | `"first_launch"`, `"settings"`, `"update_prompt"` |
+| `consent_analytics` | string | All consent events | `granted`, `denied` |
+| `consent_marketing` | string | All consent events | `granted`, `denied` |
+| `consent_personalization` | string | All consent events | `granted`, `denied` |
+| `consent_source` | string | All consent events | `first_launch`, `settings`, `update_prompt` |
 
 ---
 
 ## Deprecated Parameters
 
-| Parameter | Replaced by | Removal target |
+| Deprecated parameter | Replaced by | Removal target |
 |---|---|---|
 | `uid` | `user_id` | v5.0 |
 | `txn` | `transaction_id` | v5.0 |
 | `step` | `step_index` | v5.0 |
 | `notif_id` | `campaign_id` | v5.0 |
+
+---
+
+## Review Checklist
+
+Before adding or changing a parameter, check that:
+
+- The name uses `snake_case`
+- The value is stable across iOS and Android
+- The parameter does not contain PII
+- The value is useful for reporting or activation
+- The source is clear
+- The parameter is documented in the event definition
