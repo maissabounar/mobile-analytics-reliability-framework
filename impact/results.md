@@ -1,79 +1,137 @@
 # Results
 
-The PM had been presenting an inflated Android conversion rate to the exec team for 8 months. This project is what happened when someone finally ran the SQL.
+This project improved mobile analytics reliability across iOS and Android.
 
-**Period:** July 2025 (pre-fix baseline) → November 2025 (6 weeks post v4.13 rollout)  
-**Data source:** BigQuery, Stripe reconciliation, Commanders Act CRM reports
+Several events were incomplete, duplicated, or inconsistent across platforms. This affected conversion reporting, CRM activation, funnel analysis, and consent monitoring.
+
+**Period:** July 2025 baseline → November 2025, 6 weeks after v4.13 rollout  
+**Data sources:** BigQuery, payment reconciliation exports, CRM reporting, mobile analytics events
 
 ---
 
-## Revenue & Finance
+## Executive Summary
+
+| Area | Before | After |
+|---|---:|---:|
+| Payment reconciliation gap | 34% | 1.2% |
+| Android `transaction_id` null rate | 12.4% | 0.0% |
+| Android `claim_submitted` duplication rate | 7.9% | 0.2% |
+| Cross-platform event parity for P0/P1 events | 63% | 96% |
+| CRM post-login user match rate | 91.7% | 99.9% |
+| Daily validation rule pass rate | Not measured | 97.4% |
+| P0 issue resolution time | 3–5 days | < 4 hours |
+
+> [!NOTE]
+> The main impact was the shift from reactive debugging to monitored data reliability.
+
+---
+
+## Business Reporting
 
 | Metric | Before | After |
-|---|---|---|
-| Revenue discrepancy — BigQuery vs Stripe | **34%** | **1.2%** |
-| Monthly revenue undercount in analytics | **€41,200** | **€1,480** |
-| Finance escalations due to data discrepancy | **3 in Q3 2025** | **0 in Q4 2025** |
+|---|---:|---:|
+| Payment discrepancy between analytics and payment records | 34% | 1.2% |
+| Estimated monthly revenue gap in analytics | €41 200 | €1 480 |
+| Sales reporting escalations linked to data discrepancies | 3 in Q3 2025 | 0 in Q4 2025 |
 
-The 34% gap had three compounding causes: `transaction_id` null on 12.4% of Android payments (no Stripe deduplication possible), `payment_completed` duplicated on Android (inflated count), and `purchase_initiated` missing entirely on Android (funnel broken from the top). Finance had flagged the gap but couldn't explain it.
+Main issues found:
+
+- Missing `transaction_id` on Android payments
+- Duplicate `payment_completed` events
+- Missing `purchase_initiated` events on Android
+- Inconsistent event naming between iOS and Android
 
 ---
 
 ## Data Quality
 
 | Metric | Before | After |
-|---|---|---|
-| `transaction_id` null rate — `payment_completed` Android | **12.4%** | **0.0%** |
-| `claim_submitted` duplication rate — Android | **7.9%** | **0.2%** |
-| `user_id` null rate — P0 post-auth events Android | **8.3%** | **0.1%** |
-| Events with non-compliant naming in production | **17** | **0** |
-| Cross-platform event parity — P0/P1 events | **63%** | **96%** |
-| Daily validation rule pass rate | not measured | **97.4%** |
+|---|---:|---:|
+| Android `transaction_id` null rate | 12.4% | 0.0% |
+| Android `claim_submitted` duplication rate | 7.9% | 0.2% |
+| Android `user_id` null rate on post-auth P0 events | 8.3% | 0.1% |
+| Non-compliant event names in production | 17 | 0 |
+| Cross-platform parity for P0/P1 events | 63% | 96% |
+| Daily validation rule pass rate | Not measured | 97.4% |
+
+What improved:
+
+- Required business keys are checked daily
+- Duplicate conversions are detected before reporting
+- Deprecated events are monitored in production
+- iOS and Android tracking coverage is compared automatically
 
 ---
 
-## Product & Funnel Accuracy
+## Product and Funnel Accuracy
 
 | Metric | Before | After |
-|---|---|---|
-| Android claim conversion rate (reported) | **71%** | **64%** — corrected, not a regression |
-| Android claim conversion rate (true) | **unknown** | **64%** — baseline established |
-| `document_uploaded` visible on Android | **0%** — event missing | **78%** completion rate |
-| A/B tests invalidated by `filter_applied` overcounting | **2** | **0** |
+|---|---:|---:|
+| Android claim conversion rate, reported | 71% | 64% |
+| Android claim conversion rate, validated baseline | Unknown | 64% |
+| Android `document_uploaded` tracking coverage | 0%, event missing | 78% |
+| A/B tests affected by overcounted events | 2 | 0 |
 
-The Android conversion rate dropped 7pp after the fix. This was not a product problem — it was the removal of 7.9% duplicate `claim_submitted` events that had been inflating the denominator. Product had been optimizing against a false baseline.
+> [!IMPORTANT]
+> The drop from 71% to 64% was a measurement correction, not a product regression.
+
+The corrected 64% rate became the trusted baseline for funnel analysis, roadmap decisions, and experimentation.
 
 ---
 
-## Marketing & CRM
+## CRM and Lifecycle Activation
 
 | Metric | Before | After |
-|---|---|---|
-| Android re-engagement audience size | **41,200** | **32,100** — was inflated by naming mismatch |
-| Android push attribution accuracy | **broken** | **restored** |
-| CRM `user_id` match rate post-login | **91.7%** | **99.9%** |
-| Onboarding step 4 CRM trigger (payment method) | **not firing** | **active** |
+|---|---:|---:|
+| Android re-engagement audience size | 41 200 | 32 100 |
+| Android push attribution | Broken | Restored |
+| CRM `user_id` match rate after login | 91.7% | 99.9% |
+| Onboarding step 4 CRM trigger | Not firing | Active |
 
-Android push campaign attribution had been broken for 6+ months due to `notif_clicked` vs `notification_opened` naming split. Marketing had attributed the gap to "Android users being less responsive to push." That conclusion was wrong and had affected budget allocation for two quarters.
+The main issue was an event naming split between Android and iOS:
+
+- `notif_clicked`
+- `notification_opened`
+
+After the taxonomy fix, push attribution and lifecycle triggers were rebuilt on stable events.
 
 ---
 
-## GDPR / Legal
+## Privacy and Consent Monitoring
 
 | Metric | Before | After |
-|---|---|---|
-| Event types collecting data pre-consent | **4** | **0** |
-| Pre-consent `first_open` events in BigQuery | **~340,000** | **0 (ongoing)** |
-| Consent audit trail in BigQuery | **none** | **full trail** |
-| Sessions with consent event before any custom event | **~0%** | **99.8%** |
-| Open DPO compliance actions | **6** | **1** — `session_start` legal review pending |
+|---|---:|---:|
+| Event types firing before consent | 4 | 0 |
+| Pre-consent `first_open` events in BigQuery | ~340 000 historical records | 0 ongoing |
+| Consent audit trail in BigQuery | Not available | Available |
+| Sessions with consent captured before custom events | ~0% | 99.8% |
+| Open privacy follow-up actions | 6 | 1 |
+
+Consent checks were added to monitor whether custom events fired before consent.
+
+Analytics storage is now denied by default until the user makes a consent choice.
 
 ---
 
-## Operational
+## Operational Impact
 
 | Metric | Before | After |
-|---|---|---|
-| Data engineer time on incident investigation | **~40% of week** | **~8% of week** |
-| Mean time to resolve a P0 data quality incident | **3–5 days** | **< 4 hours** |
-| Finance escalations requiring analytics investigation | **3 in Q3** | **0 in Q4** |
+|---|---:|---:|
+| Data engineering time spent on incident investigation | ~40% of weekly time | ~8% |
+| P0 data quality resolution time | 3–5 days | < 4 hours |
+| Sales reporting escalations requiring analytics investigation | 3 in Q3 2025 | 0 in Q4 2025 |
+
+P0 issues are now detected through daily validation checks with clear owners, severity levels, and SQL references.
+
+---
+
+## Final Outcome
+
+This project created a cleaner mobile analytics foundation.
+
+Teams now have a clearer view of:
+
+- Which events are trusted
+- Which metrics are affected by tracking gaps
+- Which issues need escalation
+- Which conversion baselines are safe to use
