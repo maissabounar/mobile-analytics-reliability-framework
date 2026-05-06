@@ -1,132 +1,105 @@
 # Validation Rules
 
 **Owner:** Data Analytics  
-**Updated:** 2025-10-15  
-**Run schedule:** Daily at 08:30 CET via BigQuery Scheduled Queries → `dq_alerts.daily_results`
+**Last updated:** 2025-10-15  
+**Run schedule:** Daily at 08:30 CET  
+**Output table:** `dq_alerts.daily_results`
+
+This document defines the validation rules used to monitor mobile analytics reliability across iOS and Android.
+
+The framework checks five areas:
+
+- Completeness
+- Uniqueness
+- Conformity
+- Timeliness
+- Consistency
+- Privacy and consent
+
+The goal is to detect tracking issues before they affect dashboards, sales reporting, product decisions, or compliance reviews.
 
 ---
 
-## Severity Definitions
+## Severity Levels
 
-| Level | Meaning | Response SLA |
+| Level | Meaning | Expected response |
 |---|---|---|
-| **P0** | Breaks financial reporting, GDPR compliance, or a core conversion metric | Fix within 24h, escalate within 4h |
-| **P1** | Degrades a funnel or campaign workflow; incorrect but not financial-critical | Fix within 1 week |
-| **P2** | Low-signal noise; informs but doesn't block decisions | Weekly review |
+| **P0** | Breaks a core metric, sales reporting, or consent compliance | Escalate within 4h, fix within 24h |
+| **P1** | Degrades funnel analysis, campaign tracking, or product reporting | Fix within 1 week |
+| **P2** | Low-risk data quality issue | Review during weekly analytics standup |
 
 ---
 
 ## C — Completeness
 
-Missing required fields on events where they are unconditionally expected.
+Completeness rules check that required fields are populated when they are expected.
 
 | Rule | Event(s) | Threshold | Severity | BigQuery check |
 |---|---|---|---|---|
-| **C-01** `user_id` non-null | `payment_completed`, `claim_submitted`, `login_success`, `logout` | >0% → WARNING · >1% → CRITICAL | P0 | `check_null_user_id.sql` |
-| **C-02** `transaction_id` non-null | `payment_completed`, `payment_refunded` | Any null → CRITICAL | P0 | `check_null_user_id.sql` |
-| **C-03** `claim_id` non-null | `claim_submitted`, `claim_approved`, `claim_rejected` | Any null → CRITICAL | P0 | `check_null_user_id.sql` |
-| **C-04** `amount` non-null and > 0 | `payment_completed` | Any null or zero → CRITICAL | P0 | Ad hoc |
-| **C-05** `step_index` non-null and in \[1–6\] | `onboarding_step_completed` | >2% null → WARNING · >5% → CRITICAL | P1 | `check_naming_compliance.sql` |
-| **C-06** `auth_method` non-null | `login_success`, `signup_completed` | >1% null → WARNING | P1 | `check_naming_compliance.sql` |
-| **C-07** `document_type` non-null | `document_uploaded` | >3% null → WARNING | P2 | Ad hoc |
+| **C-01** `user_id` is not null | `payment_completed`, `claim_submitted`, `login_success`, `logout` | >0% warning, >1% critical | P0 | `check_null_user_id.sql` |
+| **C-02** `transaction_id` is not null | `payment_completed`, `payment_refunded` | Any null value | P0 | `check_required_business_keys.sql` |
+| **C-03** `claim_id` is not null | `claim_submitted`, `claim_approved`, `claim_rejected` | Any null value | P0 | `check_required_business_keys.sql` |
+| **C-04** `amount` is not null and > 0 | `payment_completed` | Any null or zero value | P0 | `check_payment_amounts.sql` |
+| **C-05** `step_index` is not null and between 1 and 6 | `onboarding_step_completed` | >2% warning, >5% critical | P1 | `check_onboarding_steps.sql` |
+| **C-06** `auth_method` is not null | `login_success`, `signup_completed` | >1% null | P1 | `check_auth_method_quality.sql` |
+| **C-07** `document_type` is not null | `document_uploaded` | >3% null | P2 | `check_document_metadata.sql` |
 
-**Audit-proven failure modes for C-01/C-02:**
-- Android `setUserId()` called in a coroutine on `IO` dispatcher while `logEvent()` fires on `Main` — race condition
-- `transaction_id` sourced from Stripe before async callback resolves — null 12.4% of the time pre-fix
-- `claim_id` generated client-side before API returns — unreliable, now blocked by implementation rule
+### Common failure patterns
+
+| Issue | Typical cause |
+|---|---|
+| Missing `user_id` | User ID set after the event is fired |
+| Missing `transaction_id` | Payment event fired before the payment callback resolves |
+| Missing `claim_id` | Claim event fired before the backend returns the final ID |
+| Missing `step_index` | Screen tracking implemented without the required step parameter |
+
+> Implementation rule: business identifiers must come from confirmed backend responses, not from temporary client-side values.
 
 ---
 
 ## U — Uniqueness
 
-Conversion events that must have exactly one occurrence per business key.
+Uniqueness rules check that conversion events are not duplicated for the same business key.
 
 | Rule | Key | Event(s) | Threshold | Severity | BigQuery check |
 |---|---|---|---|---|---|
-| **U-01** No duplicate `transaction_id` | `transaction_id` | `payment_completed` | Any duplicate → CRITICAL | P0 | `check_duplicate_conversions.sql` |
-| **U-02** No duplicate `claim_id` | `claim_id` | `claim_submitted` | Any duplicate → CRITICAL | P0 | `check_duplicate_conversions.sql` |
-| **U-03** `onboarding_step_completed` once per step per user | `user_pseudo_id + step_index` | `onboarding_step_completed` | >1% of users with duplicate step → WARNING | P1 | Ad hoc |
+| **U-01** No duplicate `transaction_id` | `transaction_id` | `payment_completed` | Any duplicate | P0 | `check_duplicate_conversions.sql` |
+| **U-02** No duplicate `claim_id` | `claim_id` | `claim_submitted` | Any duplicate | P0 | `check_duplicate_conversions.sql` |
+| **U-03** One onboarding step per user and step | `user_pseudo_id + step_index` | `onboarding_step_completed` | >1% duplicate steps | P1 | `check_duplicate_onboarding_steps.sql` |
 
-**Gap classification on duplicate events:**
+### Duplicate gap classification
 
-| Gap between duplicates | Probable cause |
+| Gap between duplicate events | Likely cause |
 |---|---|
-| < 1 000 ms | Race condition in async callback |
-| 1 000 – 30 000 ms | Double-tap or missing UI debounce |
-| > 30 000 ms | Activity recreation, session replay bug |
+| < 1 second | Async callback race condition |
+| 1–30 seconds | Double tap or missing UI debounce |
+| > 30 seconds | Activity recreation, retry logic, or session replay issue |
 
-Finance uses `transaction_id` for monthly P&L. Duplicates without deduplication inflate reported revenue. The 7.9% Android duplication rate on `claim_submitted` pre-fix came from `OnClickListener` binding — event fired twice on rapid consecutive taps.
+Sales teams use conversion and transaction data to monitor revenue performance. Duplicate events inflate reported conversions when deduplication is not applied downstream.
 
 ---
 
 ## CF — Conformity
 
-Values that must match an approved format or enum.
+Conformity rules check that event names and parameter values follow the approved tracking taxonomy.
 
 | Rule | Check | Threshold | Severity |
 |---|---|---|---|
-| **CF-01** Event name is `snake_case` | `REGEXP_CONTAINS(event_name, r'[A-Z\-\s]')` | Any non-conforming event name → WARNING | P1 |
-| **CF-02** No deprecated events in production | Name IN (`submit_claim`, `notif_clicked`, `documentUploaded`, `payment_screen_view`, `user_registered`, `step_done`) | Any traffic → WARNING | P1 |
-| **CF-03** `auth_method` in approved enum | `email`, `google`, `apple`, `sms` | Any out-of-enum → WARNING | P1 |
-| **CF-04** `error_type` in approved enum | `auth_error`, `network_timeout`, `validation_failed`, `server_error`, `permission_denied`, `session_expired`, `file_too_large`, `unsupported_format`, `payment_declined`, `unknown` | >5% out-of-enum → WARNING | P2 |
-| **CF-05** `claim_type` in approved enum | `property`, `vehicle`, `health`, `travel` | Any out-of-enum → WARNING | P1 |
-| **CF-06** `platform` is `IOS` or `ANDROID` | Firebase-native uppercase values | Any other value → WARNING | P2 |
+| **CF-01** Event name uses `snake_case` | No uppercase letters, spaces, or hyphens | Any non-compliant event | P1 |
+| **CF-02** No deprecated events in production | Event name is not deprecated | Any traffic | P1 |
+| **CF-03** `auth_method` uses approved values | `email`, `google`, `apple`, `sms` | Any invalid value | P1 |
+| **CF-04** `error_type` uses approved values | Approved error taxonomy | >5% invalid values | P2 |
+| **CF-05** `claim_type` uses approved values | `property`, `vehicle`, `health`, `travel` | Any invalid value | P1 |
+| **CF-06** `platform` is valid | `IOS` or `ANDROID` | Any other value | P2 |
 
-**CF-04 context:** Before the taxonomy fix, Android `error_type` was free-text. 47 distinct values found including full Java exception class names (`java.net.SocketTimeoutException`) and localised user-facing strings. Cross-platform error analysis was impossible.
+### Deprecated events
 
----
+The following events should not appear in production data:
 
-## T — Timeliness / Volume
-
-Volume anomalies signal dropped events, duplicated data, or tracking breaks before dashboards surface them.
-
-| Rule | Signal | Threshold | Severity |
-|---|---|---|---|
-| **T-01** `payment_completed` volume anomaly | z-score vs 7-day rolling avg | \|z\| > 2 → WARNING · \|z\| > 3 → CRITICAL | P0 |
-| **T-02** `claim_submitted` volume anomaly | z-score vs 7-day rolling avg | \|z\| > 2 → WARNING · \|z\| > 3 → CRITICAL | P0 |
-| **T-03** `login_success` sudden drop | Day-over-day % change | > −30% in 1 day → CRITICAL (possible auth outage) | P0 |
-| **T-04** BigQuery export freshness | Max `event_timestamp` in latest partition | > 26h since last update → CRITICAL | P0 |
-| **T-05** Debug environment events in production | `environment = 'debug'` in production tables | Any count > 0 → WARNING | P1 |
-
-**T-05 failure history:** A staging device running a debug build was briefly connected to the production Firebase project during a load test. 2,300 synthetic `payment_completed` events with `transaction_id = 'test_*'` landed in production BigQuery before the device was removed. Finance noticed the Stripe discrepancy within 2 hours. T-05 was added as a direct result.
-
----
-
-## CS — Consistency
-
-Cross-event and cross-platform logic that, if broken, indicates implementation gaps or session stitching failures.
-
-| Rule | Check | Threshold | Severity |
-|---|---|---|---|
-| **CS-01** iOS/Android event volume ratio within baseline | Ratio deviation vs 30-day baseline | > 30% deviation → WARNING · > 50% or one platform at zero → CRITICAL | P0/P1 |
-| **CS-02** `claim_submitted` preceded by `claim_started` in session | No orphaned submissions | > 2% orphaned → WARNING | P1 |
-| **CS-03** `payment_completed` ≤ `purchase_initiated` count (+5% tolerance) | Count comparison | > 5% excess → WARNING (suggests duplication upstream) | P0 |
-| **CS-04** `onboarding_completed` preceded by all 6 `onboarding_step_completed` events | All step_index values present | > 3% of completed sessions missing any step → WARNING | P1 |
-| **CS-05** No `payment_completed` and `payment_failed` for same `transaction_id` | Mutual exclusion | Any occurrence → CRITICAL | P0 |
-
----
-
-## P — Privacy / GDPR
-
-Non-negotiable. Any failure triggers immediate DPO notification.
-
-| Rule | Check | Threshold | Severity |
-|---|---|---|---|
-| **P-01** No `user_id` set before `consent_granted` in session | `setUserId()` call order vs consent event timestamp | Any occurrence → CRITICAL | P0 |
-| **P-02** No custom events before `consent_granted` on first-launch sessions | Custom event timestamp < `consent_granted` timestamp | Any occurrence → CRITICAL | P0 |
-| **P-03** `consent_granted` or `consent_declined` fires on first session | `first_open` sessions with neither consent event | > 5% without consent event → WARNING | P0 |
-| **P-04** Consent audit trail complete | `consent_source` non-null on all consent events | > 0% null → WARNING | P1 |
-
-**P-02 audit finding:** `app_open` and `claim_draft_saved` were confirmed firing pre-consent on both platforms before v4.11. Root cause: Firebase SDK initialized without `ANALYTICS_STORAGE = DENIED` defaults. Scope: ~340,000 `first_open` events and ~8,200 `claim_draft_saved` events collected without consent. Documented in `gdpr_audit_findings.md`.
-
----
-
-## Validation Schedule
-
-| Category | Frequency | Output table | Alert channel |
-|---|---|---|---|
-| C, U, T, CS | Daily 08:30 CET | `dq_alerts.daily_results` | #data-alerts (P0 CRITICAL), #data-quality (P1) |
-| CF | Weekly, Monday 09:00 | `dq_alerts.daily_results` | #data-quality |
-| P | Weekly + on any consent config change | `dq_alerts.daily_results` | #data-alerts + DPO direct message |
-
-P2 findings are reviewed in the weekly Analytics standup. No automated alert.
+```text
+submit_claim
+notif_clicked
+documentUploaded
+payment_screen_view
+user_registered
+step_done
