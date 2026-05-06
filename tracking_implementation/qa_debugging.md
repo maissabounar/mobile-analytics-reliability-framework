@@ -1,92 +1,134 @@
 # QA & Debugging
 
+Checklist used to validate mobile analytics events before and after release.
+
+Goal: confirm that events fire at the right time, with the right parameters, and only when consent allows tracking.
+
 ---
 
 ## Tools
 
 | Tool | Used for |
 |---|---|
-| **Analytics Debugger for Apps** (Chrome extension) |- Capture analytics hits sent from the mobile app - Validate the event payload before it reaches analytics platforms - Confirm event name, parameters, consent state, and platform metadata - Check that `transaction_id` / `claim_id` come from server response, not client-generated values |
-| **Firebase DebugView** | Mobile event validation — confirms event name, parameters, and trigger timing |
-| **BigQuery** | Post-release validation — null rates, duplicates, funnel integrity, platform parity |
+| Analytics Debugger for Apps | Inspect client-side tracking payloads |
+| Firebase DebugView | Validate mobile events in real time |
+| BigQuery | Check production data after release |
 
 ---
 
-## Mobile Real-Time Validation
+## Real-Time QA
 
-**Analytics Debugger**
-- Intercept each `dataLayer.push()` on the target page
-- Confirm event name matches taxonomy (`snake_case`, no deprecated names)
-- Confirm all required parameters are present and non-empty
-- Confirm `transaction_id` / `claim_id` come from server response, not client-generated values
+Check that:
 
-**Firebase DebugView**
-```bash
-# Android
-adb shell setprop debug.firebase.analytics.app com.example.myapp
+- Event name exists in `taxonomy/approved_event_list.csv`
+- Event uses `snake_case`
+- Deprecated event names are not used
+- Required parameters are present
+- Enum values match the approved taxonomy
+- `transaction_id` and `claim_id` come from server or provider responses
+- Event fires after backend confirmation
+- Event does not fire before consent
+- Event does not duplicate on double tap, retry, or activity recreation
 
-# iOS — add to Xcode scheme launch arguments
--FIRAnalyticsDebugEnabled
-```
-- Verify event fires **after** API response, not on button tap
-- Verify no event fires before `consent_granted` on fresh install
-- Verify no duplicate event on double-tap or activity recreation (Android)
+---
+
+## Firebase DebugView Setup
+
+Android:
+
+`adb shell setprop debug.firebase.analytics.app com.example.myapp`
+
+iOS:
+
+`-FIRAnalyticsDebugEnabled`
 
 ---
 
 ## Event Validity Rule
 
-An event is considered **valid** if and only if:
+An event is valid only if:
 
-1. All required parameters are present and non-empty
-2. The trigger fired after server confirmation (not a UI action)
-3. `user_id` is set before the event fires
-4. Consent state is `ANALYTICS_STORAGE = GRANTED`
-5. No duplicate exists for the same business key (`transaction_id` or `claim_id`) within the session
+- Required parameters are present and non-empty
+- Trigger timing matches the event definition
+- `user_id` is available for post-auth events
+- Analytics consent is granted
+- No duplicate exists for the same business key in the session
 
-If any condition fails, the event must be blocked — not sent with partial data.
+> [!IMPORTANT]
+> If a P0 event is missing a required business key, block it. Do not send partial conversion or revenue events.
 
 ---
 
-## Payload Validation Checklist
+## Payload Checklist
 
 Before marking an event as QA-passed:
 
-- [ ] Event name matches `approved_event_list.csv`
-- [ ] All required parameters non-null (see `taxonomy/parameter_dictionary.md`)
-- [ ] Enum values in approved set (`claim_type`, `payment_method`, `auth_method`)
-- [ ] `amount` is a float in major currency units, not cents
-- [ ] `env` is `"production"` — no debug events leaking to prod (see T-05 in `validation_rules.md`)
+- [ ] Event name exists in `taxonomy/approved_event_list.csv`
+- [ ] Required parameters exist in `taxonomy/parameter_dictionary.md`
+- [ ] Enum values match the approved list
+- [ ] `amount` is sent as `49.99`, not `4999`
+- [ ] `environment` is correct
+- [ ] No debug or staging event is sent to production
+- [ ] Consent state is valid before the event fires
 
 ---
 
-## Post-Release Validation (BigQuery)
+## Post-Release Validation
 
-Run within 24–48h of rollout, once sufficient volume has accumulated.
+Run BigQuery checks within 24–48h after rollout.
 
-```sql
--- Null rate on P0 identifiers — threshold: 0% on transaction_id, claim_id
--- See: sql/validation_suite.sql → CHECK 1
+| Check | Expected result |
+|---|---:|
+| Null rate on `transaction_id` | 0% |
+| Null rate on `claim_id` | 0% |
+| Duplicate `payment_completed` by `transaction_id` | 0 |
+| Duplicate `claim_submitted` by `claim_id` | 0 |
+| Debug events in production | 0 |
+| iOS/Android event parity deviation | < 30% vs baseline |
 
--- Duplicate conversions — any duplicate is a P0 incident
--- See: sql/validation_suite.sql → CHECK 2
+Reference checks:
 
--- Platform parity — flag if iOS/Android ratio deviates >30% from baseline
--- See: sql/validation_suite.sql → CHECK 4
-```
-
-**Funnel sanity check:** run `sql/analysis/funnel_claim_submission.sql` and verify:
-- `overall_cvr` within ±5pp of pre-release baseline
-- No `alert_flag` set to `P0` in output
+- `sql/validation_suite.sql`
+- `data_quality_framework/validation_rules.md`
 
 ---
 
-## Reconciliation vs Backend
+## Funnel Sanity Check
 
-| Signal | Source | Acceptable gap |
-|---|---|---|
-| `payment_completed` count | BigQuery vs Stripe dashboard | < 2% |
+Run `sql/analysis/funnel_claim_submission.sql`.
+
+Expected results:
+
+- Conversion rate stays within ±5pp of baseline
+- No P0 alert is returned
+- No sudden platform-level drop appears
+- No final conversion exceeds its upstream event volume
+
+> [!NOTE]
+> A conversion rate change after a tracking fix is not always a product regression. It may be a corrected measurement baseline.
+
+---
+
+## Reconciliation Checks
+
+| Signal | Source comparison | Accepted gap |
+|---|---|---:|
+| `payment_completed` count | BigQuery vs payment reconciliation export | < 2% |
 | `claim_submitted` count | BigQuery vs claims API count | < 1% |
-| `transaction_id` match rate | BigQuery JOIN to Stripe export | > 99% |
+| `transaction_id` match rate | BigQuery join with payment export | > 99% |
 
-A gap above threshold is treated as a P0 data quality incident regardless of whether the tracking looks correct in DebugView. DebugView confirms implementation. BigQuery confirms production accuracy.
+A gap above threshold is treated as a P0 data quality issue.
+
+DebugView confirms the implementation. BigQuery confirms production accuracy.
+
+---
+
+## QA Sign-Off
+
+An event can be marked as QA-passed when:
+
+- Real-time payload is valid
+- Trigger timing is correct
+- Consent behavior is correct
+- BigQuery checks pass after release
+- Reconciliation checks stay within threshold
