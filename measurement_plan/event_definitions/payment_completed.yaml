@@ -2,149 +2,125 @@ event_name: payment_completed
 version: "2.1"
 priority: P0
 category: revenue
-owner: Finance + Mobile Engineering
+owner: Sales Operations + Mobile Engineering
 updated: "2025-10-01"
 
 description: >
-  Fired when a payment is confirmed by the payment provider and the transaction ID
-  is available client-side. This event is the authoritative source for in-app revenue
-  and is reconciled monthly against Stripe reports. Any discrepancy exceeding 2%
-  triggers a Finance escalation.
+  Fired when a payment is confirmed and the transaction ID is available.
+  This event is the source of truth for in-app revenue reporting and payment
+  reconciliation.
 
 trigger:
   when: >
-    Payment provider (Stripe) webhook returns success AND mobile app receives
-    a push notification or polling response confirming transaction_id.
-    The event is fired from the payment confirmation handler, not from the payment sheet UI.
+    Payment provider confirms success and the app receives a valid transaction_id.
+    The event fires from the payment confirmation handler, not from the payment UI.
   not_when:
-    - Payment sheet first loads (use purchase_initiated)
-    - User selects payment method (use payment_method_selected)
-    - Payment is pending or processing (no event — wait for confirmation)
-    - Payment fails (use payment_failed)
+    - Payment screen loads
+    - User selects a payment method
+    - Payment is pending or processing
+    - Payment fails
   notes: >
-    transaction_id MUST come from the server response. Client-side ID generation
-    is not acceptable — was the root cause of the 12.4% null rate found in the audit.
-    On Android, the Stripe SDK callback must be awaited inside the ViewModel coroutine,
-    not on the UI thread.
+    transaction_id must come from the server response or payment provider response.
+    Do not generate it client-side. If transaction_id is missing, do not fire
+    payment_completed.
 
 parameters:
   required:
     - name: transaction_id
       type: string
-      source: Stripe API response → payment_intent.id
+      source: Payment provider response
       example: "pi_3Oab12CZ6"
-      notes: >
-        If transaction_id is null at event time, hold the event in a local queue
-        for up to 10 seconds waiting for the async callback. If still null, fire
-        payment_failed with error_code = "transaction_id_unavailable" instead.
+      notes: Required for reconciliation and deduplication.
 
     - name: amount
       type: float
-      unit: major currency units (EUR)
+      unit: major currency units
       example: 49.99
-      notes: Do NOT send cents (4999). Confirmed with Finance.
+      notes: Send 49.99, not 4999.
 
     - name: currency
       type: string
       example: "EUR"
-      notes: ISO 4217 code. Only EUR supported in current market.
+      notes: ISO 4217 currency code.
 
     - name: payment_method
       type: string
-      allowed_values: ["card", "sepa_debit", "apple_pay", "google_pay"]
+      allowed_values:
+        - card
+        - sepa_debit
+        - apple_pay
+        - google_pay
       example: "card"
 
     - name: user_id
       type: string
       source: Authentication state
       example: "usr_8f3a2c"
+      notes: Must be available before the event fires.
 
     - name: claim_id
       type: string
       source: Current claim context
       example: "clm_9f3a21bc"
-      notes: Links payment to claim. Required for Finance reconciliation queries.
+      notes: Links the payment to the submitted claim.
 
   optional:
     - name: is_retry
       type: string
-      allowed_values: ["true", "false"]
-      description: Whether this payment succeeded after a previous failure in the same session
+      allowed_values:
+        - "true"
+        - "false"
+      description: Whether the payment succeeded after a previous failure in the same session.
 
     - name: installment_index
       type: integer
-      description: For instalment payment plans — which instalment (1-based)
+      description: Installment number for payment plans.
       example: 2
 
 platform_implementation:
   ios:
-    location: PaymentConfirmationViewController.swift → handlePaymentResult()
-    code_snippet: |
-      func handlePaymentResult(_ result: STPPaymentHandlerActionStatus, paymentIntent: STPPaymentIntent?) {
-          guard result == .succeeded, let intent = paymentIntent else {
-              logEvent("payment_failed", errorCode: stripeError?.code)
-              return
-          }
-          Analytics.logEvent("payment_completed", parameters: [
-              "transaction_id": intent.stripeId,
-              "amount": cartTotal,
-              "currency": "EUR",
-              "payment_method": selectedPaymentMethod,
-              "user_id": AuthManager.shared.userId ?? "",
-              "claim_id": currentClaimId ?? ""
-          ])
-      }
-    verified: true
-    version_implemented: "4.13"
-
-  android:
-    location: PaymentViewModel.kt → observePaymentResult()
-    code_snippet: |
-      viewModelScope.launch {
-          val result = stripeRepository.confirmPayment(paymentMethodId, clientSecret)
-          if (result is PaymentResult.Success) {
-              val params = bundleOf(
-                  "transaction_id" to result.paymentIntentId,
-                  "amount" to cartTotal,
-                  "currency" to "EUR",
-                  "payment_method" to selectedMethod,
-                  "user_id" to authManager.userId,
-                  "claim_id" to currentClaimId
-              )
-              firebaseAnalytics.logEvent("payment_completed", params)
-          }
-      }
+    location: PaymentConfirmationViewController.swift - handlePaymentResult()
     verified: true
     version_implemented: "4.13"
     notes: >
-      Previous implementation used Activity.onActivityResult() which caused
-      event loss when activity was recreated. Moved to ViewModel coroutine in v4.13.
-      Added null guard for transaction_id with fallback to queue-and-retry pattern.
+      Event fires only after payment confirmation and only when transaction_id
+      is available.
+
+  android:
+    location: PaymentViewModel.kt - observePaymentResult()
+    verified: true
+    version_implemented: "4.13"
+    notes: >
+      Event moved to the ViewModel payment result observer to reduce event loss
+      during activity recreation. transaction_id is checked before the event fires.
 
 qa_rules:
-  - rule: transaction_id must be non-null on every payment_completed event
-    method: check_null_user_id.sql adapted for transaction_id
-    threshold: 0% null rate acceptable for P0 event
-    fail_condition: Any null transaction_id in production data
+  - rule: transaction_id is populated
+    method: BigQuery validation
+    fail_condition: transaction_id IS NULL or transaction_id = ""
 
-  - rule: Revenue reconciliation — daily BigQuery total within 2% of Stripe dashboard
-    method: Finance runs monthly reconciliation query; daily alert at 5% deviation
-    fail_condition: >2% gap sustained over 3 days
-
-  - rule: No duplicate payment_completed for same transaction_id
-    method: check_duplicate_conversions.sql
+  - rule: No duplicate payment_completed event for the same transaction_id
+    method: BigQuery duplicate check
     fail_condition: Same transaction_id appears more than once
 
-  - rule: Event fires after payment confirmation, not before
-    method: Charles Proxy — inspect Stripe webhook timing vs event timestamp
-    fail_condition: Event timestamp precedes Stripe webhook by >1 second
+  - rule: Event fires after payment confirmation
+    method: API log or proxy comparison
+    fail_condition: Event timestamp is earlier than the payment success timestamp
 
-  - rule: payment_completed and payment_failed are mutually exclusive per transaction
-    method: BigQuery — check for same session with both events same transaction_id
-    fail_condition: Any session has both payment_completed and payment_failed with same transaction_id
+  - rule: payment_completed does not fire on failed or pending payments
+    method: DebugView test with failed and pending payment scenarios
+    fail_condition: payment_completed fires without confirmed payment success
+
+  - rule: payment_completed and payment_failed are mutually exclusive
+    method: BigQuery validation
+    fail_condition: Same transaction_id has both payment_completed and payment_failed
+
+  - rule: Daily analytics revenue stays within reconciliation tolerance
+    method: BigQuery revenue check against payment reconciliation export
+    fail_condition: Revenue gap exceeds 2% for 3 consecutive days
 
 bigquery_notes: >
-  Primary source for revenue in fct_payments dbt model.
-  Deduplicated on transaction_id (partition key).
-  Joined to Stripe export table weekly for reconciliation.
-  Alert threshold: daily volume drops >15% vs 7-day rolling average.
+  Used in fct_payments as the main revenue event.
+  Deduplicated by transaction_id.
+  Joined with payment reconciliation exports for revenue quality checks.
+  Daily volume drops greater than 15% vs the 7-day rolling average trigger a P0 review.
